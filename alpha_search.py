@@ -90,15 +90,20 @@ def submit_alpha(session: requests.Session, expression: str) -> str | None:
             "https://api.worldquantbrain.com/simulations",
             json={"type": "REGULAR", "settings": SETTINGS, "regular": expression}
         )
-        print(f"  제출 응답 코드: {res.status_code} | 내용: {res.text[:100]}")
-        
         if res.status_code == 201:
-            return res.json().get("id")
+            # body가 비어있으면 Location 헤더에서 sim_id 추출
+            if res.text.strip():
+                return res.json().get("id")
+            else:
+                location = res.headers.get("Location", "")
+                sim_id = location.split("/")[-1]
+                print(f"  📍 Location 헤더에서 ID 추출: {sim_id}")
+                return sim_id if sim_id else None
         else:
             print(f"  ⚠️  제출 실패: {res.status_code} | {expression[:40]}")
             return None
     except Exception as e:
-        print(f"  ❌ 오류: {e} | 응답 내용: {res.text[:100] if res else 'no response'}")
+        print(f"  ❌ 오류: {e}")
         return None
 
 
@@ -142,32 +147,24 @@ def run_batch(session: requests.Session, alphas: list[str],
               batch_size: int = 10) -> pd.DataFrame:
     results = []
     total = len(alphas)
-
     print(f"\n🚀 총 {total}개 알파 시뮬레이션 시작\n")
 
-    for i in range(0, total, batch_size):
-        batch = alphas[i:i + batch_size]
-        sim_map = {}  # sim_id → expression
-
-        # 배치 제출
-        for expr in batch:
-            sid = submit_alpha(session, expr)
-            if sid:
-                sim_map[sid] = expr
-            time.sleep(2)  # rate limit 방지
-
-        # 결과 수집
-        for sid, expr in sim_map.items():
+    for i, expr in enumerate(alphas):
+        # 배치가 아닌 순차 실행 (동시 제한 방지)
+        sid = submit_alpha(session, expr)
+        if sid:
             result = get_result(session, sid)
             if result:
                 result["expression"] = expr
                 results.append(result)
-                sharpe = result.get("sharpe", 0) or 0
+                sharpe = result.get("sharpe") or 0
                 emoji = "🟢" if sharpe >= 1.5 else "🟡" if sharpe >= 1.0 else "🔴"
                 print(f"  {emoji} Sharpe {sharpe:.2f} | {expr[:60]}")
 
-        progress = min(i + batch_size, total)
-        print(f"\n[{progress}/{total}] 완료 ({progress/total*100:.0f}%)\n")
+        time.sleep(3)  # 순차 실행 간격
+
+        if (i + 1) % 10 == 0:
+            print(f"[{i+1}/{total}] 완료 ({(i+1)/total*100:.0f}%)")
 
     return pd.DataFrame(results)
 
