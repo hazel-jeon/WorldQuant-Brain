@@ -42,8 +42,8 @@ SETTINGS = {
 
 # 제출 기준 필터
 FILTER = {
-    "min_sharpe":   1.5,
-    "min_fitness":  1.0,
+    "min_sharpe":   1.0,   # 1.5 → 1.0으로 낮춤
+    "min_fitness":  0.5,   # 1.0 → 0.5으로 낮춤
     "min_turnover": 0.01,
     "max_turnover": 0.70,
 }
