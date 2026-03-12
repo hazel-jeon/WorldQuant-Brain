@@ -1,0 +1,17 @@
+# 환경변수 (절대 커밋 금지)
+.env
+*.env
+
+# 결과 파일 (용량 큼)
+results/*.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
