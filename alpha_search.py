@@ -193,6 +193,8 @@ def main():
     print("  🧠 WorldQuant BRAIN Alpha Search")
     print("=" * 60)
 
+    os.makedirs("results", exist_ok=True) 
+
     # 환경변수에서 인증 정보 로드
     email    = os.environ.get("BRAIN_EMAIL")
     password = os.environ.get("BRAIN_PASSWORD")
@@ -221,7 +223,7 @@ def main():
     end   = int(os.environ.get("END_IDX", len(all_alphas)))
     all_alphas = all_alphas[start:end]
     print(f"  실행 범위: {start} ~ {end} ({len(all_alphas)}개)")
-    
+
     # 배치 실행
     df = run_batch(session, all_alphas, batch_size=10)
 
