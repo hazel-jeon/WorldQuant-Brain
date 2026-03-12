@@ -18,6 +18,7 @@ import json
 import requests
 import pandas as pd
 from datetime import datetime
+from requests.auth import HTTPBasicAuth
 from generators.single_factor import generate_single_alphas
 from generators.combo_factor import generate_combo_alphas
 
@@ -59,10 +60,8 @@ BLACKLIST = [
 # ─────────────────────────────────────────────
 def login(email: str, password: str) -> requests.Session:
     session = requests.Session()
-    res = session.post(
-        "https://api.worldquantbrain.com/authentication",
-        json={"username": email, "password": password}
-    )
+    session.auth = HTTPBasicAuth(email, password)
+    res = session.post("https://api.worldquantbrain.com/authentication")
     if res.status_code != 200:
         raise Exception(f"로그인 실패: {res.text}")
     print("✅ BRAIN 로그인 성공")
