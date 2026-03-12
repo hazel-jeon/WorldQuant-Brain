@@ -90,13 +90,15 @@ def submit_alpha(session: requests.Session, expression: str) -> str | None:
             "https://api.worldquantbrain.com/simulations",
             json={"type": "REGULAR", "settings": SETTINGS, "regular": expression}
         )
+        print(f"  제출 응답 코드: {res.status_code} | 내용: {res.text[:100]}")
+        
         if res.status_code == 201:
             return res.json().get("id")
         else:
             print(f"  ⚠️  제출 실패: {res.status_code} | {expression[:40]}")
             return None
     except Exception as e:
-        print(f"  ❌ 오류: {e}")
+        print(f"  ❌ 오류: {e} | 응답 내용: {res.text[:100] if res else 'no response'}")
         return None
 
 
