@@ -14,7 +14,9 @@ on:
 jobs:
   alpha-search:
     runs-on: ubuntu-latest
-    timeout-minutes: 180  # 최대 3시간
+    permissions:
+      contents: read 
+    timeout-minutes: 180
 
     steps:
       - name: 레포 체크아웃
