@@ -64,18 +64,21 @@ def login(email: str, password: str) -> requests.Session:
         "https://api.worldquantbrain.com/authentication",
         auth=(email, password)
     )
-    
-    print(f"  로그인 응답 코드: {res.status_code}")
-    
-    # 200, 201 둘 다 성공으로 처리
     if res.status_code not in (200, 201):
         raise Exception(f"로그인 실패: {res.text}")
     
-    # 토큰 세션에 저장
+    # 토큰을 헤더에 저장
     data = res.json()
     token = data.get("token", {})
-    print(f"  ✅ 로그인 성공 | user: {data.get('user', {}).get('id')}")
+    if isinstance(token, dict):
+        token_val = token.get("value") or token.get("access") or token.get("token")
+    else:
+        token_val = str(token)
     
+    if token_val:
+        session.headers.update({"Authorization": f"Bearer {token_val}"})
+    
+    print(f"✅ 로그인 성공 | user: {data.get('user', {}).get('id')}")
     return session
 
 # ─────────────────────────────────────────────
@@ -149,7 +152,7 @@ def run_batch(session: requests.Session, alphas: list[str],
             sid = submit_alpha(session, expr)
             if sid:
                 sim_map[sid] = expr
-            time.sleep(0.5)  # rate limit 방지
+            time.sleep(2)  # rate limit 방지
 
         # 결과 수집
         for sid, expr in sim_map.items():
