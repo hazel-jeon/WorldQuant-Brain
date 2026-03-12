@@ -110,7 +110,7 @@ def submit_alpha(session: requests.Session, expression: str) -> str | None:
 # ─────────────────────────────────────────────
 # 3. 결과 조회
 # ─────────────────────────────────────────────
-def get_result(session: requests.Session, sim_id: str, timeout: int = 180) -> dict | None:
+def get_result(session: requests.Session, sim_id: str, timeout: int = 60) -> dict | None:
     for _ in range(timeout):
         try:
             res = session.get(
@@ -136,7 +136,7 @@ def get_result(session: requests.Session, sim_id: str, timeout: int = 180) -> di
         except Exception:
             pass
 
-        time.sleep(1)
+        time.sleep(2)
     return None
 
 
@@ -217,6 +217,11 @@ def main():
     print(f"  조합 신호: {len(combo_alphas)}개")
     print(f"  블랙리스트 제거 후: {len(all_alphas)}개")
 
+    start = int(os.environ.get("START_IDX", 0))
+    end   = int(os.environ.get("END_IDX", len(all_alphas)))
+    all_alphas = all_alphas[start:end]
+    print(f"  실행 범위: {start} ~ {end} ({len(all_alphas)}개)")
+    
     # 배치 실행
     df = run_batch(session, all_alphas, batch_size=10)
 

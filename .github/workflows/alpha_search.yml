@@ -2,62 +2,40 @@ name: BRAIN Alpha Search
 
 on:
   schedule:
-    # 매주 월요일 오전 9시 (KST = UTC+9 → UTC 0시)
     - cron: "0 0 * * 1"
   workflow_dispatch:
     inputs:
-      batch_size:
-        description: "배치 크기 (한 번에 제출할 알파 수)"
-        required: false
-        default: "10"
+      start_idx:
+        description: "시작 인덱스"
+        default: "0"
+      end_idx:
+        description: "끝 인덱스"
+        default: "60"
 
 jobs:
   alpha-search:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
-      contents: read 
-    timeout-minutes: 180
+      contents: read
 
     steps:
-      - name: 레포 체크아웃
-        uses: actions/checkout@v4
-
-      - name: Python 설정
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
-
-      - name: 의존성 설치
-        run: pip install requests pandas
-
-      - name: results 디렉토리 생성
-        run: mkdir -p results
+      - run: pip install requests pandas
 
       - name: 알파 탐색 실행
         env:
           BRAIN_EMAIL:    ${{ secrets.BRAIN_EMAIL }}
           BRAIN_PASSWORD: ${{ secrets.BRAIN_PASSWORD }}
+          START_IDX: ${{ github.event.inputs.start_idx || '0' }}
+          END_IDX:   ${{ github.event.inputs.end_idx || '60' }}
         run: python alpha_search.py
 
-      - name: 결과 아티팩트 업로드
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: alpha-results-${{ github.run_number }}
+          name: alpha-results-${{ github.event.inputs.start_idx || '0' }}
           path: results/
-          retention-days: 30
-
-      - name: 좋은 알파 발견 시 Slack 알림 (선택사항)
-        if: always()
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-        run: |
-          if ls results/good_alphas_*.csv 1> /dev/null 2>&1; then
-            COUNT=$(tail -n +2 results/good_alphas_*.csv | wc -l)
-            if [ "$COUNT" -gt "0" ] && [ -n "$SLACK_WEBHOOK" ]; then
-              curl -X POST -H 'Content-type: application/json' \
-                --data "{\"text\":\"🏆 BRAIN 알파 탐색 완료! 기준 통과: ${COUNT}개\"}" \
-                $SLACK_WEBHOOK
-            fi
-          fi
