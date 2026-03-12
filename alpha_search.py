@@ -60,13 +60,23 @@ BLACKLIST = [
 # ─────────────────────────────────────────────
 def login(email: str, password: str) -> requests.Session:
     session = requests.Session()
-    session.auth = HTTPBasicAuth(email, password)
-    res = session.post("https://api.worldquantbrain.com/authentication")
-    if res.status_code != 200:
+    res = session.post(
+        "https://api.worldquantbrain.com/authentication",
+        auth=(email, password)
+    )
+    
+    print(f"  로그인 응답 코드: {res.status_code}")
+    
+    # 200, 201 둘 다 성공으로 처리
+    if res.status_code not in (200, 201):
         raise Exception(f"로그인 실패: {res.text}")
-    print("✅ BRAIN 로그인 성공")
+    
+    # 토큰 세션에 저장
+    data = res.json()
+    token = data.get("token", {})
+    print(f"  ✅ 로그인 성공 | user: {data.get('user', {}).get('id')}")
+    
     return session
-
 
 # ─────────────────────────────────────────────
 # 2. 알파 제출
