@@ -82,13 +82,23 @@ ML_ALPHAS = [
     #   ebit / sharesout / close = 주당 EBIT / 주가 = EBIT yield
     #   ts_rank(40일)로 단기 모멘텀 필터 + rank()로 크로스섹셔널 정규화
     #   참조: rank(ts_rank(ebit/sharesout/close, 40)) → Sharpe 1.80, Fitness 1.42
+    #   [Fitness 개선 근거]
+    #   Fitness = Sharpe × sqrt(|returns| / max(turnover, 0.125))
+    #   TOP3000+decay5 → turnover ~14% → sqrt(returns/0.14) 낮음
+    #   TOP1000+decay9+truncation0.1 → turnover ~14% 유사하나 returns↑ (유동성 집중)
+    #   참조 실적이 TOP1000, decay=9, truncation=0.1 기준이므로 그대로 맞춤
     # ─────────────────────────────────────────────────────────────────────────
     {
         "name": "v2_ebit_yield_tsrank",
         "description": "EBIT Yield ts_rank — ebit/sharesout/close(EBIT 수익률)의 "
                        "최근 40일 시계열 순위를 크로스섹셔널 rank로 재랭킹. "
-                       "참조 실적: Sharpe ~1.80, Fitness ~1.42 (TOP1000, Subindustry).",
+                       "참조 실적: Sharpe ~1.80, Fitness ~1.42 (TOP1000, decay=9, Subindustry).",
         "expression": "rank(ts_rank(ebit / sharesout / close, 40))",
+        "settings": {
+            "universe":   "TOP1000",   # TOP3000→TOP1000: 유동성 집중으로 returns↑
+            "decay":      9,           # decay 9: turnover 낮춰 Fitness 분모 축소
+            "truncation": 0.1,         # 참조 파라미터 그대로
+        },
     },
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -208,8 +218,13 @@ def get_session(email: str, password: str) -> requests.Session:
 
 
 def submit_alpha(session: requests.Session, alpha: dict) -> dict | None:
-    """단일 알파 시뮬레이션 제출."""
-    payload = {**BASE_SETTINGS, "code": alpha["expression"]}
+    """단일 알파 시뮬레이션 제출.
+
+    alpha 딕셔너리에 'settings' 키가 있으면 BASE_SETTINGS를 알파별로 오버라이드합니다.
+    예) "settings": {"universe": "TOP1000", "decay": 9, "truncation": 0.1}
+    """
+    settings = {**BASE_SETTINGS, **alpha.get("settings", {})}
+    payload = {**settings, "code": alpha["expression"]}
 
     resp = session.post(f"{BASE_URL}/alphas", json=payload)
     if resp.status_code in (200, 201):
