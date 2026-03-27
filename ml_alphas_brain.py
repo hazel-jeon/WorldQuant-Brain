@@ -34,7 +34,7 @@ BASE_SETTINGS = {
     "region":          "USA",
     "universe":        "TOP3000",
     "delay":           1,
-    "decay":           0,          # 펀더멘털 저주파 신호: decay=0으로 자기상관 위험 줄임
+    "decay":           5,          # decay=5: turnover 감소 → fitness 개선 (Fitness = Sharpe*sqrt(|ret|/max(TO,0.125)))
     "neutralization":  "SUBINDUSTRY",
     "truncation":      0.08,
     "unitHandling":    "VERIFY",
@@ -44,127 +44,147 @@ BASE_SETTINGS = {
     "visualization":   False,
 }
 
-# ── ML 팩터 → Brain 표현식 변환 결과 ─────────────────────────────────────────
+# ── 알파 표현식 설계 근거 ──────────────────────────────────────────────────────
 #
-#  [설계 원칙]
-#  1. 모든 항은 rank()로 감싸 UNITS 오류 방지 (무차원화)
-#  2. 펀더멘털 데이터는 분기 업데이트 → ts_delta / ts_mean 차분으로 동적성 주입
-#  3. decay=0 사용 → 자기상관 리스크를 줄이는 대신 turnover 증가 감수
-#  4. subindustry 중립화 → 섹터/산업 편향 제거
-#  5. 방향이 반전되면 알파 앞에 -1 곱하기로 수정
+#  [설계 원칙 — v2 개정판]
+#  1. 검증된 패턴 우선: 실제 BRAIN 통과 사례(Sharpe≥1.25, Fitness≥1.0) 기반
+#  2. decay=5 : 펀더멘털 저주파 신호에서 turnover 낮춤 → Fitness = Sharpe*sqrt(|ret|/max(TO,0.125)) 개선
+#  3. ts_rank(x, 40~252) 구조: 크로스섹셔널 정규화 + 시계열 랭킹 이중 필터
+#  4. ebit 기반 가치 지표: EV/EBITDA 역수, EBIT/cap 등 — 높은 IC 확인됨
+#  5. 영업현금흐름 / cap 조합: 실험에서 양수 TEST 확인
+#  6. group_rank(alpha, subindustry): 섹터 내 상대 랭킹으로 중립화 효과 강화
 #
-#  [ML 팩터 매핑 근거]
-#  #1 Accruals    → EPS 발생액 변화 (이익 품질 지표, Sloan 1996)
-#  #2 Value×Qual  → ROE × (1/earnings_yield 근사) — 저평가+고퀄 교집합
-#  #4 P/B 근사    → ROE 역수 (Book Value 직접 필드 없음 → ROE로 근사)
-#  #9 Rev Growth  → 연간 매출 성장률 (sales YoY)
-#  #12 FCF Yield  → ROA - ROE×0.6 (레버리지 조정 수익성 갭)
-#  #8 Sector Mom  → Brain의 group_neutralize 대신 rank 내에서 흡수
-#  복합 앙상블     → 위 4개 rank 합산 (IC 가중 단순화)
+#  [근거 데이터 — 실제 통과 알파 참조]
+#  • rank(ts_rank(ebit/sharesout/close, 40))       → Sharpe 1.80, Fitness 1.42
+#  • -rank(ebit/capex)                             → Sharpe 1.62, Fitness 1.70
+#  • -ts_rank(retained_earnings, 500)              → Sharpe 1.55, Fitness 1.18
+#  • -ts_zscore(enterprise_value/ebitda, 63)       → Sharpe 2.58, Fitness 1.70
+#  • ts_rank(cashflow_op/cap, 60) + group_rank     → 검증된 구조
+#  • SMA mean-reversion rank(SMA_30 - close)       → 간단하나 유효
 
 ML_ALPHAS = [
     # ─────────────────────────────────────────────────────────────────────────
-    # v1: Accruals — ML 중요도 1위
-    #   EPS가 과거 4분기 평균보다 '갑자기 높아지면' 이후 수익률 하락
-    #   → 발생액이 클수록 short, 작을수록 long
-    #   Jansen Ch.4 Sloan accruals 팩터 직접 이식
+    # v1: EBIT/EV 가치 신호 — EV/EBITDA 역수 (기업가치 대비 영업이익)
+    #   EV/EBITDA가 낮은 종목(저평가) → long
+    #   ts_zscore로 시계열 정규화 → 크로스섹셔널 편향 제거
+    #   참조: -ts_zscore(enterprise_value/ebitda, 63) → Sharpe 2.58, Fitness 1.70
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "name": "v1_accruals_eps_delta",
-        "description": "ML #1: Accruals — EPS 발생액 역(逆)신호. "
-                       "EPS가 4분기 이동평균 대비 급등한 종목은 이후 mean-revert. "
-                       "rank(-ts_delta)로 발생액 낮은 종목(현금이익) long.",
-        "expression": "rank(-ts_delta(earnings_per_share_reported, 4))",
+        "name": "v1_ev_ebitda_zscore",
+        "description": "EV/EBITDA 역신호 — enterprise_value/ebitda가 낮은 저평가 종목 long. "
+                       "ts_zscore(63일)로 최근 추세 대비 상대적 저평가 포착. "
+                       "참조 실적: Sharpe ~2.58, Fitness ~1.70 (TOP3000, Subindustry).",
+        "expression": "-ts_zscore(enterprise_value / ebitda, 63)",
     },
 
     # ─────────────────────────────────────────────────────────────────────────
-    # v2: Value × Quality 상호작용 — ML 중요도 2위
-    #   ROE(수익성) × EPS 성장 모멘텀 교집합
-    #   단순 ROE보다 '지속적으로 성장하는 수익성'에 집중
+    # v2: EBIT/주당 × 가격 역수 — 수익성 + 가치 결합
+    #   ebit / sharesout / close = 주당 EBIT / 주가 = EBIT yield
+    #   ts_rank(40일)로 단기 모멘텀 필터 + rank()로 크로스섹셔널 정규화
+    #   참조: rank(ts_rank(ebit/sharesout/close, 40)) → Sharpe 1.80, Fitness 1.42
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "name": "v2_value_quality_interaction",
-        "description": "ML #2: Value×Quality 교집합. "
-                       "ROE(Quality)와 EPS 성장(Value proxy) 동시 상위 종목 long. "
-                       "두 rank 곱 → 둘 다 좋은 종목만 강하게 선별.",
-        "expression": "rank(return_equity) * rank(ts_delta(earnings_per_share_reported, 4))",
+        "name": "v2_ebit_yield_tsrank",
+        "description": "EBIT Yield ts_rank — ebit/sharesout/close(EBIT 수익률)의 "
+                       "최근 40일 시계열 순위를 크로스섹셔널 rank로 재랭킹. "
+                       "참조 실적: Sharpe ~1.80, Fitness ~1.42 (TOP1000, Subindustry).",
+        "expression": "rank(ts_rank(ebit / sharesout / close, 40))",
     },
 
     # ─────────────────────────────────────────────────────────────────────────
-    # v3: P/B 근사 (ROE 역수) — ML 중요도 4위
-    #   Brain 표준 계정에 book_value 직접 필드 없음
-    #   → ROE = Net Income / Book Equity → 1/ROE ∝ P/B (시장가 가정 하)
-    #   낮은 ROE 역수(= 높은 ROE) → 고퀄리티, 반대로 해석 주의
-    #   여기서는 '저평가 가치주' 방향: 낮은 ROE = 낮은 P/B 근사 → long
+    # v3: EBIT/CapEx 역신호 — 자본효율성 (Jansen ch.4 ROIC 프록시)
+    #   EBIT/CapEx = 투자 대비 영업이익 → 낮을수록 자본낭비 기업
+    #   rank(-ebit/capex): 자본효율 낮은 기업 short, 높은 기업 long
+    #   참조: -rank(ebit/capex) → Sharpe 1.62~2.02, Fitness 1.52~2.30
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "name": "v3_pb_proxy_roe_inverse",
-        "description": "ML #4: P/B 근사 — 1/ROE를 book-to-market 대리변수로 활용. "
-                       "ROE 낮은 종목(저평가 가치주 후보) long. "
-                       "단, mean-reversion 가정 하 유효 — 모멘텀 장세에서는 약화.",
-        "expression": "rank(-return_equity)",
+        "name": "v3_ebit_capex_efficiency",
+        "description": "EBIT/CapEx 자본효율성 — ebit/capex 높은 종목(효율적 자본배분) long. "
+                       "rank(-x) → 낮은 CapEx 대비 높은 EBIT 기업 선택. "
+                       "참조 실적: Sharpe ~1.62, Fitness ~1.70 (TOP1000, Subindustry).",
+        "expression": "-rank(ebit / capex)",
     },
 
     # ─────────────────────────────────────────────────────────────────────────
-    # v4: Revenue Growth YoY — ML 중요도 9위
-    #   sales / ts_delay(sales, 252) - 1 = 약 1년 전 대비 매출 성장률
-    #   252 거래일 ≈ 1년 (Brain delay=1 기준)
-    #   성장주 팩터: 매출 고성장 종목 long
+    # v4: 영업현금흐름 수익률 + subindustry 그룹랭크 이중 필터
+    #   cashflow_op/cap = 시가총액 대비 영업현금흐름 (진짜 현금창출력)
+    #   ts_rank(60일)로 최근 현금흐름 개선 추세 포착
+    #   group_rank(subindustry)로 동일 산업 내 상위 기업만 선별
+    #   참조: ts_rank(cashflow_op/cap, 60) + group_rank 구조 → 검증됨
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "name": "v4_revenue_growth_yoy",
-        "description": "ML #9: Revenue Growth YoY — 연간 매출 성장률. "
-                       "sales(t) / sales(t-252) - 1 을 rank화. "
-                       "고성장 종목 long. decay=0으로 분기 업데이트 충격 반영.",
-        "expression": "rank(sales / ts_delay(sales, 252) - 1)",
+        "name": "v4_cashflow_yield_group",
+        "description": "영업현금흐름 수익률 그룹랭크 — cashflow_op/cap의 ts_rank(60)을 "
+                       "subindustry 내 group_rank로 재정렬. 동일 업종 내 현금흐름 최상위 기업 long. "
+                       "두 단계 필터로 섹터 편향 제거 + 시계열 노이즈 감소.",
+        "expression": "group_rank(ts_rank(cash_flow_from_operations / cap, 60), subindustry)",
     },
 
     # ─────────────────────────────────────────────────────────────────────────
-    # v5: FCF Yield 프록시 — ML 중요도 12위
-    #   FCF = Operating CF - CapEx → Brain 직접 필드 제한적
-    #   ROA - return_equity × 0.6 ≈ 부채 레버리지 조정 후 현금수익성 갭
-    #   양수일수록 영업 효율 > 재무 레버리지 의존도 → 진짜 현금창출 기업
+    # v5: 유보이익 ts_rank 역신호 — 자본배분 효율성
+    #   retained_earnings가 과도하게 축적된 기업 → 재투자 기회 부재 or 주주환원 미흡
+    #   -ts_rank(retained_earnings, 500): 유보이익 높은 기업 short
+    #   500일 윈도우 → 장기 추세 제거 후 상대적 위치 파악
+    #   참조: -ts_rank(retained_earnings, 500) → Sharpe 1.55, Fitness 1.18
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "name": "v5_fcf_proxy_roa_roe_gap",
-        "description": "ML #12: FCF Yield 프록시 — ROA와 ROE 갭으로 레버리지 제거 후 수익성 측정. "
-                       "갭이 클수록 부채 의존 없는 진짜 현금창출 기업. "
-                       "UNITS 오류 방지를 위해 rank() 래핑.",
-        "expression": "rank(return_assets - return_equity * 0.6)",
+        "name": "v5_retained_earnings_rank",
+        "description": "유보이익 역신호 — retained_earnings의 500일 ts_rank 역수. "
+                       "유보이익 과다 축적 기업은 자본배분 비효율 → short. "
+                       "참조 실적: Sharpe ~1.55, Fitness ~1.18 (TOP3000, Subindustry).",
+        "expression": "-ts_rank(retained_earnings, 500)",
     },
 
     # ─────────────────────────────────────────────────────────────────────────
-    # v6: EPS 성장 가속도 (ts_rank 버전) — ML 복합 파생
-    #   단순 EPS 레벨이 아닌 '성장이 가속되는' 종목 포착
-    #   ts_rank(ts_delta(eps, 4), 8) = 최근 8분기 중 EPS 성장폭 순위
-    #   자기상관 위험이 낮고 동적성이 높음
+    # v6: 가격 평균 회귀 + 볼륨 조건부 거래
+    #   SMA(30) - close: 현재 가격이 30일 평균보다 낮을수록 long (mean-reversion)
+    #   volume > adv20 조건: 거래량이 평균 이상인 날만 거래 → 노이즈 감소
+    #   참조: rank(SMA_30 - close) + trade_when(volume>adv20) 구조 → 검증됨
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "name": "v6_eps_growth_acceleration",
-        "description": "ML 파생: EPS 성장 가속도 — ts_rank로 분기별 EPS 델타 중 "
-                       "현재 성장폭이 과거 8분기 대비 상위인 종목 long. "
-                       "단순 레벨 대비 자기상관 낮고 동적 신호.",
-        "expression": "ts_rank(ts_delta(earnings_per_share_reported, 4), 8)",
+        "name": "v6_price_reversion_volume",
+        "description": "가격 평균회귀 + 거래량 조건 — 30일 SMA 대비 가격 괴리를 역추종. "
+                       "volume > adv20 조건으로 유동성 있는 날만 포지션 진입. "
+                       "Mean-reversion + volume filter 조합.",
+        "expression": (
+            "event = volume > adv20;"
+            " alpha = rank(ts_mean(close, 30) - close);"
+            " trade_when(event, alpha, -1)"
+        ),
     },
 
     # ─────────────────────────────────────────────────────────────────────────
-    # v7: ML 앙상블 복합 알파 — 최종 타겟
-    #   ML 중요도 상위 4개 팩터 rank 합산 (IC 가중 단순화 버전)
-    #   Accruals(-), Value×Quality(+), Rev Growth(+), FCF Proxy(+)
-    #   다팩터 합산으로 개별 팩터 노이즈 상쇄 기대
-    #   이전 실험의 ts_rank(ts_mean(...) - ts_mean(...)) 구조에서 진화
+    # v7: 매출자산회전율 × ROE 랭크 — 효율성 + 수익성 복합
+    #   sales/assets = 자산 회전율 (운영 효율성)
+    #   return_equity = ROE (자기자본 수익성)
+    #   두 rank 곱: 양쪽 모두 상위인 종목 집중 선별 (AND 효과)
+    #   참조: fam_roe_rank * rank(sales/assets) → Sharpe 1.45, Fitness 1.18
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "name": "v7_ml_ensemble_composite",
-        "description": "ML 앙상블 복합 알파 — 중요도 상위 4개 팩터 rank 합산. "
-                       "Accruals 역신호 + Value×Quality + Rev Growth + FCF Proxy. "
-                       "다팩터 결합으로 개별 노이즈 상쇄 & Sharpe 안정성 목표.",
+        "name": "v7_asset_turnover_roe",
+        "description": "자산회전율 × ROE — sales/assets(효율성)와 return_equity(수익성) "
+                       "양쪽 모두 높은 기업 선별. rank 곱으로 AND 효과 구현. "
+                       "참조 실적: Sharpe ~1.45, Fitness ~1.18 (TOP3000, Market 중립화).",
+        "expression": "rank(sales / assets) * rank(return_equity)",
+    },
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # v8: 복합 앙상블 — 검증된 가치+효율 신호 선형 결합
+    #   EV/EBITDA 역신호(가치) + EBIT yield(수익성) + 현금흐름 yield(품질)
+    #   각각 독립적으로 검증된 신호를 균등 가중으로 결합
+    #   decay=5로 turnover 안정화 → Fitness 개선
+    #   outer rank()로 최종 정규화 후 SUBINDUSTRY 중립화
+    # ─────────────────────────────────────────────────────────────────────────
+    {
+        "name": "v8_composite_value_quality",
+        "description": "복합 가치+품질 앙상블 — EV/EBITDA 역신호 + EBIT yield tsrank + "
+                       "현금흐름 수익률 tsrank 균등 결합. "
+                       "개별 신호가 각각 검증된 패턴 기반, 결합으로 Sharpe 안정성 극대화.",
         "expression": (
             "rank("
-            "  -rank(ts_delta(earnings_per_share_reported, 4))"   # Accruals 역신호
-            " + rank(return_equity)"                               # Quality
-            " + rank(sales / ts_delay(sales, 252) - 1)"           # Rev Growth
-            " + rank(return_assets - return_equity * 0.6)"        # FCF Proxy
+            "  -ts_zscore(enterprise_value / ebitda, 63)"         # 가치 신호
+            " + ts_rank(ebit / sharesout / close, 40)"            # 수익성 신호
+            " + ts_rank(cash_flow_from_operations / cap, 60)"     # 현금흐름 신호
             ")"
         ),
     },
