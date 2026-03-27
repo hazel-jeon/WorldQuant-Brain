@@ -46,7 +46,7 @@ jobs:
           BRAIN_EMAIL:    ${{ secrets.BRAIN_EMAIL }}
           BRAIN_PASSWORD: ${{ secrets.BRAIN_PASSWORD }}
         run: |
-          python wqbrain/ml_alphas_brain.py \
+          python ml_alphas_brain.py \
             --email    "$BRAIN_EMAIL" \
             --password "$BRAIN_PASSWORD" \
             --start    ${{ github.event.inputs.start_idx }} \
@@ -92,7 +92,7 @@ jobs:
           BRAIN_EMAIL:    ${{ secrets.BRAIN_EMAIL }}
           BRAIN_PASSWORD: ${{ secrets.BRAIN_PASSWORD }}
         run: |
-          python wqbrain/ml_alphas_brain.py \
+          python ml_alphas_brain.py \
             --email    "$BRAIN_EMAIL" \
             --password "$BRAIN_PASSWORD" \
             --collect-only \
@@ -130,7 +130,7 @@ jobs:
           BRAIN_EMAIL:    ${{ secrets.BRAIN_EMAIL }}
           BRAIN_PASSWORD: ${{ secrets.BRAIN_PASSWORD }}
         run: |
-          python wqbrain/ml_alphas_brain.py \
+          python ml_alphas_brain.py \
             --email    "$BRAIN_EMAIL" \
             --password "$BRAIN_PASSWORD" \
             --collect-only \
