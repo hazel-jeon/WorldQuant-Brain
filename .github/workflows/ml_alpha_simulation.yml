@@ -1,0 +1,144 @@
+name: ML Alpha Brain Simulation
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "실행 모드"
+        required: true
+        default: "submit"
+        type: choice
+        options:
+          - submit        # 제출만
+          - collect       # 수집만 (이전 submit 후 사용)
+          - full          # 제출 + 대기 + 수집 (단일 실행)
+      start_idx:
+        description: "알파 시작 인덱스 (0~6)"
+        required: false
+        default: "0"
+      end_idx:
+        description: "알파 종료 인덱스 (1~7)"
+        required: false
+        default: "7"
+      wait_seconds:
+        description: "수집 전 대기 시간(초) — full 모드에서만 사용"
+        required: false
+        default: "300"
+
+jobs:
+  # ── submit 단계 ─────────────────────────────────────────────────────────────
+  submit:
+    if: ${{ github.event.inputs.mode == 'submit' || github.event.inputs.mode == 'full' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Submit ML alphas to Brain
+        env:
+          BRAIN_EMAIL:    ${{ secrets.BRAIN_EMAIL }}
+          BRAIN_PASSWORD: ${{ secrets.BRAIN_PASSWORD }}
+        run: |
+          python wqbrain/ml_alphas_brain.py \
+            --email    "$BRAIN_EMAIL" \
+            --password "$BRAIN_PASSWORD" \
+            --start    ${{ github.event.inputs.start_idx }} \
+            --end      ${{ github.event.inputs.end_idx }} \
+            --submit-only \
+            --ids-file submitted_ids.json
+
+      - name: Upload submitted IDs
+        uses: actions/upload-artifact@v4
+        with:
+          name: submitted-ids
+          path: submitted_ids.json
+          retention-days: 3
+
+  # ── full 모드: 대기 후 수집 ──────────────────────────────────────────────────
+  collect-after-submit:
+    if: ${{ github.event.inputs.mode == 'full' }}
+    needs: submit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Download submitted IDs
+        uses: actions/download-artifact@v4
+        with:
+          name: submitted-ids
+
+      - name: Wait for Brain simulation
+        run: |
+          echo "Brain 시뮬레이션 완료 대기: ${{ github.event.inputs.wait_seconds }}초"
+          sleep ${{ github.event.inputs.wait_seconds }}
+
+      - name: Collect results
+        env:
+          BRAIN_EMAIL:    ${{ secrets.BRAIN_EMAIL }}
+          BRAIN_PASSWORD: ${{ secrets.BRAIN_PASSWORD }}
+        run: |
+          python wqbrain/ml_alphas_brain.py \
+            --email    "$BRAIN_EMAIL" \
+            --password "$BRAIN_PASSWORD" \
+            --collect-only \
+            --ids-file submitted_ids.json
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-results-${{ github.run_number }}
+          path: brain_results.json
+          retention-days: 30
+
+  # ── collect-only 단계 (별도 실행) ────────────────────────────────────────────
+  collect-only:
+    if: ${{ github.event.inputs.mode == 'collect' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Download previously submitted IDs
+        uses: actions/download-artifact@v4
+        with:
+          name: submitted-ids
+
+      - name: Collect Brain simulation results
+        env:
+          BRAIN_EMAIL:    ${{ secrets.BRAIN_EMAIL }}
+          BRAIN_PASSWORD: ${{ secrets.BRAIN_PASSWORD }}
+        run: |
+          python wqbrain/ml_alphas_brain.py \
+            --email    "$BRAIN_EMAIL" \
+            --password "$BRAIN_PASSWORD" \
+            --collect-only \
+            --ids-file submitted_ids.json
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-results-${{ github.run_number }}
+          path: brain_results.json
+          retention-days: 30
